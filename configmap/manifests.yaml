@@ -1,0 +1,38 @@
+# fips-ems-watcher: relaxes FIPS 140-3 EMS enforcement on OpenShift
+# ingress router pods by mounting modified crypto policy files via ConfigMap.
+#
+# Deploy:
+#   ./deploy.sh
+#
+# This approach works because HAProxy reads OpenSSL config at process
+# startup. Runtime modifications (oc exec / nsenter) do NOT take effect
+# because HAProxy's -sf reload does not reinitialize the SSL context.
+# The ConfigMap volume mount ensures the relaxed policy is present
+# before haproxy starts.
+
+# --- ConfigMap with modified crypto policy ---
+# Two files override the FIPS EMS enforcement:
+#   openssl_fips.config  -> tls1-prf-ems-check = 0 (FIPS provider level)
+#   opensslcnf.config    -> Options = RHNoEnforceEMSinFIPS (libssl level)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fips-ems-override
+  namespace: openshift-ingress
+  labels:
+    app.kubernetes.io/name: fips-ems-watcher
+data:
+  openssl_fips.config: |
+    [fips_sect]
+    tls1-prf-ems-check = 0
+    activate = 1
+  opensslcnf.config: |
+    CipherString = @SECLEVEL=2:kEECDH:kEDH:kPSK:kDHEPSK:kECDHEPSK:-kRSAPSK:-kRSA:-aDSS:-CHACHA20:-SHA256:-3DES:!DES:!RC4:!RC2:!IDEA:-SEED:!eNULL:!aNULL:-CBC:-SHA1:!MD5:-SHA384:-CAMELLIA:-ARIA:-AESCCM8
+    Ciphersuites = TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:TLS_AES_128_CCM_SHA256
+    TLS.MinProtocol = TLSv1.2
+    TLS.MaxProtocol = TLSv1.3
+    DTLS.MinProtocol = DTLSv1.2
+    DTLS.MaxProtocol = DTLSv1.2
+    SignatureAlgorithms = ECDSA+SHA256:ECDSA+SHA384:ECDSA+SHA512:rsa_pss_pss_sha256:rsa_pss_pss_sha384:rsa_pss_pss_sha512:rsa_pss_rsae_sha256:rsa_pss_rsae_sha384:rsa_pss_rsae_sha512:RSA+SHA256:RSA+SHA384:RSA+SHA512:ECDSA+SHA224:RSA+SHA224
+    Groups = secp256r1:secp521r1:secp384r1:ffdhe2048:ffdhe3072:ffdhe4096:ffdhe6144:ffdhe8192
+    Options = RHNoEnforceEMSinFIPS

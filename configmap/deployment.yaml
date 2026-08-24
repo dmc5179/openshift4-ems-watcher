@@ -1,0 +1,83 @@
+# Optional: Deployment for the FIPS EMS watcher (monitor mode).
+# This is NOT required for the EMS relaxation to work.
+# The actual relaxation is applied by deploy.sh via ConfigMap mounts.
+# This watcher monitors that the configuration remains in place.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fips-ems-watcher
+  namespace: openshift-ingress
+  labels:
+    app.kubernetes.io/name: fips-ems-watcher
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fips-ems-watcher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fips-ems-watcher
+    spec:
+      serviceAccountName: fips-ems-watcher
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 10
+
+      containers:
+        - name: watcher
+          image: registry.redhat.io/openshift4/ose-cli-artifacts-rhel9:v4.17
+          command: ["/bin/bash", "/scripts/watcher.sh"]
+
+          env:
+            - name: ROUTER_DEPLOYMENT
+              value: "router-default"
+
+            - name: INGRESS_NS
+              value: "openshift-ingress"
+
+            - name: POLL_INTERVAL
+              value: "30"
+
+            - name: SETTLE_SECONDS
+              value: "5"
+
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-f", "watcher.sh"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+
+      volumes:
+        - name: scripts
+          configMap:
+            name: fips-ems-watcher-script
+            defaultMode: 0555
+        - name: tmp
+          emptyDir:
+            sizeLimit: 10Mi
